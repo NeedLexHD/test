@@ -1,0 +1,1082 @@
+<?php
+/**
+ * Astra Child Theme functions and definitions
+ *
+ * @link https://developer.wordpress.org/themes/basics/theme-functions/
+ *
+ * @package Astra Child
+ * @since 1.0.0
+ */
+
+
+/**
+ * Define Constants
+ */
+define( 'CHILD_THEME_ASTRA_CHILD_VERSION', '1.0.0' );
+
+
+/**
+ * Enqueue styles
+ */
+function child_enqueue_styles() {
+    wp_enqueue_style( 'astra-child-theme-css', get_stylesheet_directory_uri() . '/style.css', array('astra-theme-css'), CHILD_THEME_ASTRA_CHILD_VERSION, 'all' );
+}
+add_action( 'wp_enqueue_scripts', 'child_enqueue_styles', 15 );
+
+
+// ═══════════════════════════════════════════════════════════════
+// AFFICHAGE DES IMAGES GITHUB - SOLUTION OPTIMISÉE
+// ═══════════════════════════════════════════════════════════════
+
+
+/**
+ * Helper function to retrieve GitHub images with caching
+ */
+function get_product_github_images($product_id) {
+    static $cache = [];
+    if (isset($cache[$product_id])) {
+        return $cache[$product_id];
+    }
+    
+    $images = get_post_meta($product_id, '_github_images', true);
+    $cache[$product_id] = (!empty($images) && is_array($images)) ? $images : [];
+    
+    return $cache[$product_id];
+}
+
+
+// 1. PAGES PRODUITS - Afficher les images GitHub sur les pages produits
+add_filter('woocommerce_product_get_image', 'display_github_product_image', 10, 5);
+function display_github_product_image($image, $product, $size, $attr, $placeholder) {
+    $product_id = $product->get_id();
+    $github_images = get_product_github_images($product_id);
+    if (!empty($github_images)) {
+        $first_image = $github_images[0];
+        $default_attr = array(
+            'src' => $first_image,
+            'class' => 'attachment-woocommerce_thumbnail size-woocommerce_thumbnail',
+            'alt' => $product->get_name(),
+        );
+        $attr = wp_parse_args($attr, $default_attr);
+
+
+        $html_attr = '';
+        foreach ($attr as $name => $value) {
+            $html_attr .= " $name=" . '"' . esc_attr($value) . '"';
+        }
+
+
+        return '<img' . $html_attr . ' />';
+    }
+
+
+    return $image;
+}
+
+
+// 2. PANIER - Afficher les images GitHub dans le panier
+add_filter('woocommerce_cart_item_thumbnail', 'display_github_cart_thumbnail', 10, 3);
+function display_github_cart_thumbnail($image, $cart_item, $cart_item_key) {
+    $product = $cart_item['data'];
+    $product_id = $product->get_id();
+    $github_images = get_product_github_images($product_id);
+    if (!empty($github_images)) {
+        $first_image = $github_images[0];
+        return '<img src="' . esc_url($first_image) . '" alt="' . esc_attr($product->get_name()) . '" class="attachment-woocommerce_thumbnail" />';
+    }
+
+
+    return $image;
+}
+
+
+// 3. RÉSUMÉ DE COMMANDE (CHECKOUT) - Afficher les images GitHub
+add_filter('woocommerce_order_item_thumbnail', 'display_github_checkout_thumbnail', 10, 2);
+function display_github_checkout_thumbnail($image, $item) {
+    $product = $item->get_product();
+    if (!$product) {
+        return $image;
+    }
+
+
+    $product_id = $product->get_id();
+    $github_images = get_product_github_images($product_id);
+
+
+    if (!empty($github_images)) {
+        $first_image = $github_images[0];
+        return '<img src="' . esc_url($first_image) . '" alt="' . esc_attr($product->get_name()) . '" class="attachment-woocommerce_thumbnail" width="60" />';
+    }
+
+
+    return $image;
+}
+
+
+// 4. AJAX - Récupérer les images GitHub (support batch et single)
+add_action('wp_ajax_get_github_image', 'ajax_get_github_image');
+add_action('wp_ajax_nopriv_get_github_image', 'ajax_get_github_image');
+function ajax_get_github_image() {
+    if (isset($_POST['product_slugs']) && is_array($_POST['product_slugs'])) {
+        $slugs = array_map('sanitize_text_field', $_POST['product_slugs']);
+        $results = array();
+        
+        foreach ($slugs as $slug) {
+            $product = get_page_by_path($slug, OBJECT, 'product');
+            if ($product) {
+                $github_images = get_product_github_images($product->ID);
+                if (!empty($github_images)) {
+                    $results[$slug] = $github_images[0];
+                }
+            }
+        }
+        
+        wp_send_json_success($results);
+    }
+    
+    $slug = isset($_POST['product_slug']) ? sanitize_text_field($_POST['product_slug']) : '';
+    if (empty($slug)) {
+        wp_send_json_error();
+    }
+
+
+    $product = get_page_by_path($slug, OBJECT, 'product');
+    if (!$product) {
+        wp_send_json_error();
+    }
+
+
+    $github_images = get_product_github_images($product->ID);
+    if (!empty($github_images)) {
+        wp_send_json_success($github_images[0]);
+    }
+
+
+    wp_send_json_error();
+}
+
+
+// 5. CHECKOUT BLOCKS - Hook l'API REST pour forcer les images GitHub
+add_filter('woocommerce_rest_prepare_shop_order_object', 'force_github_in_rest_api', 10, 3);
+function force_github_in_rest_api($response, $object, $request) {
+    if (isset($response->data['line_items'])) {
+        foreach ($response->data['line_items'] as &$item) {
+            if (isset($item['product_id'])) {
+                $github_images = get_product_github_images($item['product_id']);
+                if (!empty($github_images)) {
+                    $item['image'] = array(
+                        'id' => 0,
+                        'src' => $github_images[0]
+                    );
+                }
+            }
+        }
+    }
+    
+    return $response;
+}
+
+
+// 6. JAVASCRIPT - Un seul hook wp_footer optimisé
+add_action('wp_footer', 'github_images_unified_script');
+function github_images_unified_script() {
+    if (!is_product() && !is_cart() && !is_checkout()) {
+        return;
+    }
+
+
+    wp_enqueue_script('jquery');
+
+
+    $debug = defined('WP_DEBUG') && WP_DEBUG;
+    $is_product = is_product();
+    $is_cart = is_cart();
+    $is_checkout = is_checkout();
+    $product_images = array();
+    if ($is_product) {
+        global $product;
+        if ($product) {
+            $product_images = get_product_github_images($product->get_id());
+        }
+    }
+
+
+    $products_mapping = array();
+    if ($is_checkout) {
+        $args = array(
+            'post_type' => 'product',
+            'posts_per_page' => -1,
+            'post_status' => 'publish'
+        );
+        $products = get_posts($args);
+        
+        foreach ($products as $product) {
+            $product_obj = wc_get_product($product->ID);
+            $github_images = get_product_github_images($product->ID);
+            
+            if (!empty($github_images)) {
+                $products_mapping[] = array(
+                    'nom' => $product->post_title,
+                    'slug' => $product->post_name,
+                    'sku' => $product_obj->get_sku(),
+                    'image' => $github_images[0]
+                );
+            }
+        }
+    }
+    ?>
+    <script>
+    (function($) {
+        'use strict';
+
+
+        // Variable globale partagée pour l'index de galerie
+        window.galleryCurrentIndex = 0;
+
+
+        const GitHubImageReplacer = {
+            config: {
+                debug: <?php echo $debug ? 'true' : 'false'; ?>,
+                ajaxUrl: '<?php echo admin_url('admin-ajax.php'); ?>',
+                isProduct: <?php echo $is_product ? 'true' : 'false'; ?>,
+                isCart: <?php echo $is_cart ? 'true' : 'false'; ?>,
+                isCheckout: <?php echo $is_checkout ? 'true' : 'false'; ?>,
+                productImages: <?php echo json_encode($product_images); ?>,
+                productsMapping: <?php echo json_encode($products_mapping); ?>
+            },
+
+
+            processedSlugs: new Set(),
+
+
+            log: function(message) {
+                if (this.config.debug) {
+                    console.log('[GitHub Images] ' + message, Array.prototype.slice.call(arguments, 1));
+                }
+            },
+
+
+            init: function() {
+                this.log('Initializing...');
+                if (this.config.isProduct) {
+                    this.initProductPage();
+                }
+
+
+                if (this.config.isCart || this.config.isCheckout) {
+                    this.initCartCheckout();
+                }
+
+
+                $(document.body).on('updated_checkout updated_cart_totals', () => {
+                    this.log('Cart/Checkout updated');
+                    this.processedSlugs.clear();
+                    setTimeout(() => this.replaceCartCheckoutImages(), 300);
+                });
+            },
+
+
+            initProductPage: function() {
+                this.log('Product page init');
+                if (this.config.productImages.length === 0) {
+                    this.log('No GitHub images');
+                    return;
+                }
+
+
+                setTimeout(() => this.replaceProductGallery(), 500);
+                setTimeout(() => this.addGalleryArrows(), 1000);
+                this.replaceRelatedProducts();
+            },
+
+
+            initCartCheckout: function() {
+                this.log('Cart/Checkout init');
+
+                // Annuler les anciens timers
+                if (this.cartTimers) {
+                    this.cartTimers.forEach(timer => clearTimeout(timer));
+                }
+                this.cartTimers = [];
+
+                this.replaceCartCheckoutImages();
+
+                // Stocker les nouveaux timers
+                [100, 500, 1500, 3000, 5000].forEach(delay => {
+                    const timer = setTimeout(() => this.replaceCartCheckoutImages(), delay);
+                    this.cartTimers.push(timer);
+                });
+            },
+
+
+            replaceProductGallery: function() {
+                const imgs = this.config.productImages;
+                if (imgs.length === 0) return;
+
+
+                const mainImage = document.querySelector('.woocommerce-product-gallery__image img, .wp-post-image');
+                if (mainImage && imgs[0]) {
+                    mainImage.src = imgs[0];
+                    mainImage.srcset = '';
+                    const mainLink = mainImage.closest('a');
+                    if (mainLink) mainLink.href = imgs[0];
+                }
+
+
+                const gallery = document.querySelector('.woocommerce-product-gallery__wrapper');
+                if (gallery && imgs.length > 1) {
+                    let thumbsContainer = gallery.querySelector('.flex-control-nav');
+                    if (!thumbsContainer) {
+                        thumbsContainer = document.createElement('ol');
+                        thumbsContainer.className = 'flex-control-nav flex-control-thumbs';
+                        gallery.appendChild(thumbsContainer);
+                    } else {
+                        thumbsContainer.innerHTML = '';
+                    }
+
+
+                    imgs.forEach((imgUrl, index) => {
+                        const li = document.createElement('li');
+                        const img = document.createElement('img');
+                        img.src = imgUrl;
+                        img.alt = '';
+                        img.style.cssText = 'cursor:pointer;width:100px;height:100px;object-fit:cover';
+                        img.dataset.galleryIndex = index;
+                        
+                        li.appendChild(img);
+                        thumbsContainer.appendChild(li);
+                    });
+                }
+            },
+
+
+            addGalleryArrows: function() {
+                const gallery = document.querySelector('.woocommerce-product-gallery__wrapper');
+
+                // Nettoyer les anciennes flèches
+                $('.gallery-nav-arrow').remove();
+
+                if (!gallery) {
+                    return;
+                }
+
+
+                const imgs = this.config.productImages;
+                if (imgs.length <= 1) return;
+
+
+                // DÉSACTIVER FLEXSLIDER SUR LES MINIATURES
+                setTimeout(() => {
+                    if (typeof $.fn.flexslider !== 'undefined') {
+                        $('.flex-control-thumbs').off('click');
+                        const $gallery = $('.woocommerce-product-gallery__wrapper');
+                        if ($gallery.data('flexslider')) {
+                            $gallery.data('flexslider').vars.controlNav = false;
+                        }
+                    }
+                }, 200);
+
+
+                const mainImage = gallery.querySelector('img');
+                const mainLink = mainImage.closest('a');
+
+
+                // Création des flèches
+                const prevArrow = document.createElement('button');
+                prevArrow.className = 'gallery-nav-arrow prev';
+                prevArrow.innerHTML = '&#8592;';
+                prevArrow.setAttribute('aria-label', 'Image précédente');
+                prevArrow.setAttribute('type', 'button');
+
+
+                const nextArrow = document.createElement('button');
+                nextArrow.className = 'gallery-nav-arrow next';
+                nextArrow.innerHTML = '&#8594;';
+                nextArrow.setAttribute('aria-label', 'Image suivante');
+                nextArrow.setAttribute('type', 'button');
+
+
+                const container = gallery.querySelector('.woocommerce-product-gallery__image') || gallery;
+                container.appendChild(prevArrow);
+                container.appendChild(nextArrow);
+                
+                // Fonction scroll - GARDE LA POSITION (80ms, ultra-rapide)
+                const scrollToThumb = (index) => {
+                    const activeThumb = document.querySelector('.flex-control-thumbs li img[data-gallery-index="' + index + '"]');
+                    const slider = document.querySelector('.flex-control-thumbs');
+                    
+                    if (activeThumb && slider) {
+                        const thumbLeft = activeThumb.offsetLeft;
+                        const thumbWidth = activeThumb.offsetWidth;
+                        const sliderWidth = slider.offsetWidth;
+                        const targetScroll = thumbLeft - (sliderWidth / 2) + (thumbWidth / 2);
+                        
+                        // Force le scroll sans interférence
+                        requestAnimationFrame(() => {
+                            $(slider).stop(true, true).animate({
+                                scrollLeft: targetScroll
+                            }, 80);
+                        });
+                    }
+                };
+                
+                // Met à jour la miniature active visuellement
+                const updateActiveThumbnail = (index) => {
+                    document.querySelectorAll('.flex-control-thumbs li img').forEach(thumb => {
+                        thumb.classList.remove('active', 'flex-active');
+                    });
+                    const activeThumb = document.querySelector('.flex-control-thumbs li img[data-gallery-index="' + index + '"]');
+                    if (activeThumb) {
+                        activeThumb.classList.add('active', 'flex-active');
+                        scrollToThumb(index);
+                    }
+                };
+                
+                // Synchronise le sélecteur avec l'image - CORRECTION ICI
+                const updateAttributeSelect = (imageUrl) => {
+                    const $thumb = $('.flex-control-thumbs li img[src="' + imageUrl + '"]');
+                    if ($thumb.length) {
+                        const couleur = $thumb.attr('data-couleur');
+                        const type = $thumb.attr('data-type');
+                        const modele = $thumb.attr('data-modele');
+                        
+                        if (couleur) {
+                            const $select = $('select[name="attribute_pa_couleur"], select[name="attribute_couleur"]');
+                            if ($select.val() !== couleur) {
+                                $select.val(couleur).trigger('change');
+                            }
+                        }
+if (type) {
+    const $select = $('select[name="attribute_type"], select[name="attribute_pa_type"], select[name="attribute_pa__type"], select[name="attribute__type"]');
+    
+    // FIX : Cherche l'option qui matche (insensible casse)
+    const $option = $select.find('option').filter(function() {
+        return $(this).val().toLowerCase().includes(type.toLowerCase());
+    }).first();
+    
+    if ($option.length && $select.val() !== $option.val()) {
+        console.log('Type forcé : ' + $option.val() + ' (de ' + type + ')');
+        $select.val($option.val()).trigger('change');
+    }
+}
+
+                        if (modele) {
+                            const $select = $('select[name="attribute_modele"], select[name="attribute_pa_modele"]');
+                            if ($select.val() !== modele) {
+                                $select.val(modele).trigger('change');
+                            }
+                        }
+                    }
+                };
+
+
+                // Fonction principale de changement d'image
+                const changeImage = (newIndex) => {
+                    if (newIndex < 0) newIndex = imgs.length - 1;
+                    if (newIndex >= imgs.length) newIndex = 0;
+
+
+                    window.galleryCurrentIndex = newIndex;
+                    mainImage.src = imgs[newIndex];
+                    mainImage.srcset = '';
+                    if (mainLink) mainLink.href = imgs[newIndex];
+                    updateActiveThumbnail(newIndex);
+                    updateAttributeSelect(imgs[newIndex]);
+                };
+                
+                // Animation visuelle des flèches
+                const triggerAnim = (button) => {
+                    button.classList.add('active-anim');
+                    setTimeout(() => {
+                        button.classList.remove('active-anim');
+                        button.blur();
+                    }, 80);
+                };
+
+
+                // Events des flèches
+                prevArrow.onclick = function(e) {
+                    e.preventDefault();
+                    triggerAnim(prevArrow);
+                    changeImage(window.galleryCurrentIndex - 1);
+                };
+                
+                nextArrow.onclick = function(e) {
+                    e.preventDefault();
+                    triggerAnim(nextArrow);
+                    changeImage(window.galleryCurrentIndex + 1);
+                };
+
+
+                // Navigation clavier - avec nettoyage
+                if (window.galleryKeydownHandler) {
+                    document.removeEventListener('keydown', window.galleryKeydownHandler);
+                }
+
+                window.galleryKeydownHandler = (e) => {
+                    if (document.activeElement.tagName === 'INPUT' || 
+                        document.activeElement.tagName === 'TEXTAREA' ||
+                        document.activeElement.isContentEditable) {
+                        return;
+                    }
+
+
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        triggerAnim(prevArrow);
+                        changeImage(window.galleryCurrentIndex - 1);
+                    }
+                    if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        triggerAnim(nextArrow);
+                        changeImage(window.galleryCurrentIndex + 1);
+                    }
+                };
+
+                document.addEventListener('keydown', window.galleryKeydownHandler);
+                
+                // Clics sur les miniatures - FIX DÉFINITIF avec délégation
+                $(document).on('click', '.flex-control-thumbs li img', function(e) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    
+                    // Flag pour bloquer VariationImageManager
+                    window.manualThumbnailClick = true;
+                    
+                    const index = parseInt(this.dataset.galleryIndex);
+                    if (!isNaN(index)) {
+                        changeImage(index);
+                    }
+                    
+                    // Débloquer après 500ms
+                    setTimeout(() => { window.manualThumbnailClick = false; }, 500);
+                    
+                    return false;
+                });
+
+            },
+
+
+            replaceCartCheckoutImages: function() {
+                this.log('Replacing cart/checkout images...');
+                if (this.config.isCheckout && this.config.productsMapping.length > 0) {
+                    this.replaceCheckoutByTitle();
+                }
+
+
+                const slugs = new Set();
+                $('.wc-block-components-order-summary-item__image img, .wc-block-components-order-summary-item img').each((i, img) => {
+                    const $item = $(img).closest('.wc-block-components-order-summary-item, li');
+                    const $link = $item.find('a[href*="/produit/"]').first();
+                    const slug = this.extractSlugFromLink($link);
+                    if (slug) slugs.add(slug);
+                });
+                $('.wc-block-cart-item__image img').each((i, img) => {
+                    const $link = $(img).closest('a[href*="/produit/"]');
+                    const slug = this.extractSlugFromLink($link);
+                    if (slug) slugs.add(slug);
+                });
+                $('.woocommerce-cart-form img, table.shop_table img, .woocommerce-checkout-review-order-table img').each((i, img) => {
+                    const $row = $(img).closest('tr');
+                    const slug = this.extractSlugFromLink($row.find('a[href*="/produit/"]').first());
+                    if (slug) slugs.add(slug);
+                });
+                if (slugs.size > 0) {
+                    this.batchFetchImages(Array.from(slugs));
+                }
+
+
+                this.replaceRelatedProducts();
+            },
+
+
+            replaceCheckoutByTitle: function() {
+                const productsByTitle = {};
+                this.config.productsMapping.forEach(product => {
+                    if (product.nom) {
+                        const normalized = this.normalizeTitle(product.nom);
+                        productsByTitle[normalized] = product;
+                    }
+                });
+
+
+                document.querySelectorAll('.wc-block-components-order-summary-item').forEach(item => {
+                    const h3 = item.querySelector('.wc-block-components-product-name');
+                    if (!h3) return;
+
+
+                    const titleNormalized = this.normalizeTitle(h3.textContent.trim());
+                    const product = productsByTitle[titleNormalized];
+                    if (product && product.image) {
+                        const img = item.querySelector('img');
+                        if (img && (img.src.includes('placeholder') || img.src.includes('woocommerce-placeholder'))) {
+                            img.src = product.image;
+                            img.srcset = '';
+                        }
+                    }
+                });
+            },
+
+
+            normalizeTitle: function(title) {
+                return title.toLowerCase()
+                    .replace(/[éèêë]/g, 'e')
+                    .replace(/[àâä]/g, 'a')
+                    .replace(/[îï]/g, 'i')
+                    .replace(/[ôö]/g, 'o')
+                    .replace(/[ùûü]/g, 'u')
+                    .replace(/[ç]/g, 'c')
+                    .replace(/[\s\-_]+/g, '-')
+                    .replace(/[^a-z0-9\-]/g, '')
+                    .replace(/\-+/g, '-')
+                    .trim();
+            },
+
+
+            replaceRelatedProducts: function() {
+                const slugs = new Set();
+                document.querySelectorAll('li.wc-block-product img[src*=\"placeholder\"]').forEach(img => {
+                    const li = img.closest('li.wc-block-product');
+                    if (!li) return;
+                    const titleLink = li.querySelector('h2.wp-block-post-title a, .wc-block-components-product-name a');
+                    const slug = this.extractSlugFromLink($(titleLink));
+                    if (slug) slugs.add(slug);
+                });
+                document.querySelectorAll('.related.products img, .upsells img, .cross-sells img').forEach(img => {
+                    const link = img.closest('a');
+                    const slug = this.extractSlugFromLink($(link));
+                    if (slug) slugs.add(slug);
+                });
+                if (slugs.size > 0) {
+                    this.batchFetchImages(Array.from(slugs));
+                }
+            },
+
+
+            extractSlugFromLink: function($link) {
+                if (!$link || !$link.length) return null;
+                const href = $link.attr('href');
+                if (!href) return null;
+                const match = href.match(/produit\/([^\/]+)/);
+                return match ? match[1] : null;
+            },
+
+
+            batchFetchImages: function(slugs) {
+                const unprocessed = slugs.filter(slug => !this.processedSlugs.has(slug));
+                if (unprocessed.length === 0) return;
+
+
+                $.post(this.config.ajaxUrl, {
+                    action: 'get_github_image',
+                    product_slugs: unprocessed
+                }, (response) => {
+                    if (response.success && response.data) {
+                        Object.keys(response.data).forEach(slug => {
+                            this.processedSlugs.add(slug);
+                            this.replaceImagesBySlug(slug, response.data[slug]);
+                        });
+                    }
+                });
+            },
+
+
+replaceImagesBySlug: function(slug, imageUrl) {
+    $('.wc-block-components-order-summary-item, .wc-block-cart-item, li, tr').each((i, item) => {
+        const $item = $(item);
+        const $link = $item.find('a[href*="/produit/"]').first();
+        const itemSlug = this.extractSlugFromLink($link);
+        
+        if (itemSlug && itemSlug === slug) {
+            $item.find('img').attr('src', imageUrl).removeAttr('srcset');
+        }
+    });
+
+    $('li.wc-block-product, .related.products a, .upsells a, .cross-sells a').each((i, elem) => {
+        const $elem = $(elem);
+        const $link = $elem.is('a') ? $elem : $elem.find('a').first();
+        const itemSlug = this.extractSlugFromLink($link);
+        
+        if (itemSlug && itemSlug === slug) {
+            $elem.find('img').attr('src', imageUrl).removeAttr('srcset');
+        }
+    });
+}
+        };
+
+
+        $(document).ready(() => {
+            if (!window.GitHubImageReplacerInitialized) {
+                GitHubImageReplacer.init();
+                window.GitHubImageReplacerInitialized = true;
+            }
+        });
+
+        // Cleanup mémoire au changement de page
+        $(window).on('beforeunload pagehide', function() {
+            if (window.galleryKeydownHandler) {
+                document.removeEventListener('keydown', window.galleryKeydownHandler);
+                window.galleryKeydownHandler = null;
+            }
+            $('.gallery-nav-arrow').off();
+            $(document).off('click', '.flex-control-thumbs li img');
+            if (GitHubImageReplacer.cartTimers) {
+                GitHubImageReplacer.cartTimers.forEach(timer => clearTimeout(timer));
+            }
+        });
+
+
+    })(jQuery);
+    </script>
+    <?php
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// GESTION VARIATIONS ↔ IMAGES GITHUB (PC + LP) - TOUS ATTRIBUTS
+// ═══════════════════════════════════════════════════════════════
+
+add_action('wp_footer', 'script_variation_couleur_images', 20);
+function script_variation_couleur_images() {
+    if (!is_product()) {
+        return;
+    }
+    
+    global $product;
+    if (!$product || !$product->is_type('variable')) {
+        return;
+    }
+    
+    $attributes = $product->get_variation_attributes();
+    if (empty($attributes)) {
+        return;
+    }
+    
+    $product_slug = $product->get_slug();
+    $prefix = (stripos($product_slug, 'lampe') !== false) ? 'LP' : 'PC';
+    $folder = ($prefix === 'LP') ? 'lampes/' : 'porte-cles/';
+    
+    $slug_parts = explode('-', $product_slug);
+    $generic_words = array('porte', 'cle', 'cles', 'lampe', 'led', 'lumiere');
+    $clean_parts = array();
+    
+    foreach ($slug_parts as $part) {
+        if (!in_array(strtolower($part), $generic_words) && strlen($part) > 1) {
+            $clean_parts[] = $part;
+        }
+    }
+    
+    if (!empty($clean_parts)) {
+        $short_slug = implode('-', $clean_parts);
+    } else {
+        $short_slug = end($slug_parts);
+    }
+    
+    ?>
+    <script>
+    (function($) {
+        'use strict';
+        
+        const VariationImageManager = {
+            config: {
+                baseUrl: 'https://raw.githubusercontent.com/NeedLexHD/Pokeball-Images/main/',
+                prefix: '<?php echo esc_js($prefix); ?>',
+                folder: '<?php echo esc_js($folder); ?>',
+                productSlug: '<?php echo esc_js($short_slug); ?>',
+                debug: false
+            },
+            
+            couleurMapping: {
+                'arc-en-ciel': 'arc-en-ciel','blanc': 'blanc','bleu-metal': 'bleu-metal',
+                'bleu-phosphorescent': 'bleu-vert-phosphorescent','gris': 'gris','magenta': 'magenta',
+                'noir-et-blanc': 'noir-blanc','rose': 'rose','rouge-et-noir': 'rouge-noir',
+                'transparent-luciole-bleu': 'luciole','tricolore-bleu-vert-violet': 'bleu-vert-violet',
+                'tricolore-rouge-jaune-vert': 'rouge-jaune-vert','turquoise': 'turquoise','vert': 'vert',
+                'vert-menthe': 'vert-menthe','vert-militaire': 'vert-militaire','vert-nucleaire': 'vert-nucleaire',
+                'violet-brillant': 'violet-brillant'
+            },
+            
+            typeMapping: {'anneau': 'anneau','crochet': 'crochet'},
+            
+            modeleMapping: {
+                'grand-sourire': 'grand','sourire-leger': 'leger','sourire-malefique': 'malefique',
+                'sourire-nauseeux': 'nauseuse','sourire-cousu': 'cousue'
+            },
+            
+            log: function(message, data) {
+                if (this.config.debug) console.log('[Variation↔Image] ' + message, data || '');
+            },
+            
+            normalizeSlug: function(value) {
+                return (value || '').toLowerCase()
+                    .replace(/[éèêë]/g, 'e').replace(/[àâä]/g, 'a').replace(/[îï]/g, 'i')
+                    .replace(/[ôö]/g, 'o').replace(/[ùûü]/g, 'u').replace(/[ç]/g, 'c')
+                    .replace(/[\s_\(\)]/g, '-').replace(/[^a-z0-9\-]/g, '').replace(/\-+/g, '-').replace(/^-|-$/g, '');
+            },
+            
+            getAllSelectedAttributes: function() {
+                const attrs = {};
+                $('select[name^="attribute_"]').each((i, el) => {
+                    const name = $(el).attr('name');
+                    const raw = $(el).val();
+                    if (!raw) return;
+                    const attrKey = name.replace(/^attribute_/, '');
+                    attrs[attrKey] = this.normalizeSlug(raw);
+                });
+                return attrs;
+            },
+            
+            init: function() {
+                this.log('Init - ' + this.config.prefix + '-' + this.config.productSlug);
+                this.bindEvents();
+                this.syncThumbnailsWithAttributes();
+                this.selectDefaultAttributes();
+            },
+            
+            bindEvents: function() {
+                const self = this;
+                $('form.variations_form').on('found_variation', function(event, variation) {
+                    if (window.manualThumbnailClick) return;
+                    self.onVariationChange(variation);
+                });
+                $('select[name^="attribute_"]').on('change', function() {
+                    if (window.manualThumbnailClick) return;
+                    self.changeImageFromCurrentAttributes();
+                });
+            },
+            
+            syncThumbnailsWithAttributes: function() {
+                const self = this;
+                setTimeout(() => {
+                    $('.flex-control-thumbs li img').each(function() {
+                        const $thumb = $(this);
+                        const imgSrc = $thumb.attr('src');
+                        const attrs = self.extractAttributesFromImageUrl(imgSrc);
+                        if (attrs.type) $thumb.attr('data-type', attrs.type);
+                        if (attrs.modele) $thumb.attr('data-modele', attrs.modele);
+                        if (attrs.couleur) $thumb.attr('data-couleur', attrs.couleur);
+                    });
+                }, 1200);
+            },
+            
+selectDefaultAttributes: function() {
+    $('select[name^="attribute_"]').each((i, el) => {
+        const $select = $(el);
+        // Si une valeur est déjà sélectionnée par défaut par WooCommerce, on touche à rien
+        if ($select.val()) return;
+        
+        // Sinon on prend la première option valide
+        const first = $select.find('option').filter((_, opt) => opt.value !== '').first();
+        if (first.length) {
+            $select.val(first.val());
+            $select.trigger('change'); // <--- C'est ça qui débloque le panier !
+        }
+    });
+    // On laisse le trigger('change') faire le boulot pour l'image aussi
+},
+            
+            extractAttributesFromImageUrl: function(imageUrl) {
+                if (!imageUrl) return {};
+                const filename = imageUrl.split('/').pop().replace('.png', '').replace(/-\d+$/, '');
+                const pattern = this.config.prefix + '-' + this.config.productSlug + '-';
+                const result = {};
+                if (filename.includes(pattern)) {
+                    let suffix = filename.replace(pattern, '');
+                    if (suffix.includes('-demo-')) suffix = suffix.split('-demo-')[0];
+                    
+                    if (this.config.prefix === 'PC' && (suffix === 'anneau' || suffix === 'crochet')) {
+                        result.type = suffix;
+                        return result;
+                    }
+                    if (this.config.prefix === 'LP') {
+                        for (const [key, value] of Object.entries(this.modeleMapping)) {
+                            if (value === suffix) { result.modele = key; return result; }
+                        }
+                    }
+                    for (const [key, value] of Object.entries(this.couleurMapping)) {
+                        if (value === suffix || key === suffix) { result.couleur = key; return result; }
+                    }
+                    result.couleur = suffix;
+                }
+                return result;
+            },
+            
+            onVariationChange: function(variation) {
+                const attrs = {};
+                Object.keys(variation.attributes).forEach(key => {
+                    if (!variation.attributes[key]) return;
+                    const cleanKey = key.replace(/^attribute_/, '');
+                    attrs[cleanKey] = this.normalizeSlug(variation.attributes[key]);
+                });
+                this.changeImageFromAttributes(attrs);
+            },
+            
+            buildImageUrl: function(attrs) {
+                let suffix = null;
+                
+                if (this.config.prefix === 'PC') {
+                    const type = attrs['pa__type'] || attrs['_type'] || attrs['pa_type'] || attrs['type'] || null;
+                    if (type && this.typeMapping[type]) {
+                        suffix = this.typeMapping[type];
+                    } else {
+                        const couleur = attrs['pa_couleur'] || attrs['couleur'] || null;
+                        if (couleur) suffix = this.couleurMapping[couleur] || couleur;
+                    }
+                }
+                
+                if (this.config.prefix === 'LP') {
+                    const modele = attrs['pa_modele'] || attrs['modele'] || null;
+                    if (modele && this.modeleMapping[modele]) {
+                        suffix = this.modeleMapping[modele];
+                    } else {
+                        const couleur = attrs['pa_couleur'] || attrs['couleur'] || null;
+                        if (couleur) suffix = this.couleurMapping[couleur] || couleur;
+                    }
+                }
+                
+                return suffix 
+                    ? this.config.baseUrl + this.config.folder + this.config.prefix + '-' + this.config.productSlug + '-' + suffix + '.png'
+                    : this.config.baseUrl + this.config.folder + this.config.prefix + '-' + this.config.productSlug + '.png';
+            },
+            
+            changeImageFromCurrentAttributes: function() {
+                const attrs = this.getAllSelectedAttributes();
+                this.changeImageFromAttributes(attrs);
+            },
+            
+            changeImageFromAttributes: function(attrs) {
+                const imageUrl = this.buildImageUrl(attrs);
+                this.updateMainImage(imageUrl);
+            },
+            
+            updateMainImage: function(imageUrl) {
+                const mainImage = $('.woocommerce-product-gallery__image img, .wp-post-image').first();
+                if (!mainImage.length) return;
+                const self = this;
+                const tempImg = new Image();
+                tempImg.onload = () => {
+                    mainImage.css('opacity', '0.7');
+                    setTimeout(() => {
+                        mainImage.attr('src', imageUrl).removeAttr('srcset');
+                        mainImage.closest('a').attr('href', imageUrl);
+                        mainImage.css('opacity', '1');
+                        self.updateActiveThumbnail(imageUrl);
+                    }, 30);
+                };
+                tempImg.onerror = () => {
+                    const altUrl = imageUrl.replace('.png', '-1.png');
+                    const tempImg2 = new Image();
+                    tempImg2.onload = () => {
+                        mainImage.css('opacity', '0.7');
+                        setTimeout(() => {
+                            mainImage.attr('src', altUrl).removeAttr('srcset');
+                            mainImage.closest('a').attr('href', altUrl);
+                            mainImage.css('opacity', '1');
+                            self.updateActiveThumbnail(altUrl);
+                        }, 30);
+                    };
+                    tempImg2.onerror = () => {};
+                    tempImg2.src = altUrl;
+                };
+                tempImg.src = imageUrl;
+            },
+            
+            updateActiveThumbnail: function(imageUrl) {
+                $('.flex-control-thumbs li img').removeClass('active flex-active');
+                $('.flex-control-thumbs li img').each(function() {
+                    if ($(this).attr('src') === imageUrl) {
+                        $(this).addClass('active flex-active');
+                        const dataIndex = $(this).attr('data-gallery-index');
+                        if (dataIndex !== undefined) window.galleryCurrentIndex = parseInt(dataIndex);
+                        const slider = $('.flex-control-thumbs');
+                        if (slider.length) {
+                            const thumbLeft = $(this).parent().position().left + slider.scrollLeft();
+                            const thumbWidth = $(this).width();
+                            const sliderWidth = slider.width();
+                            const targetScroll = thumbLeft - (sliderWidth / 2) + (thumbWidth / 2);
+                            requestAnimationFrame(() => slider.stop(true, true).animate({scrollLeft: targetScroll}, 80));
+                        }
+                    }
+                });
+            }
+        };
+        
+        $(document).ready(() => setTimeout(() => VariationImageManager.init(), 500));
+
+        
+/* ════════════════════════════════════════════════════════════════
+   FORCER : Normal (7cm) + PREMIÈRE Miniature
+   UNIQUEMENT pour les POKEBALL (pas les lampes)
+   ════════════════════════════════════════════════════════════════ */
+
+// Colle ce code JUSTE AVANT la ligne :
+//   $(document).ready(() => setTimeout(() => VariationImageManager.init(), 500));
+// À la fin de la fonction script_variation_couleur_images()
+
+// Force Normal (7cm) + PREMIÈRE miniature UNIQUEMENT sur les Pokeball
+$(document).ready(function() {
+    setTimeout(function() {
+        // Vérifie si c'est une Pokeball (slug contient "pokeball" ou catégorie)
+        const isPokeball = window.location.href.toLowerCase().includes('pokeball') || 
+                          $('body').hasClass('product-pokeball') ||
+                          $('.product_title').text().toLowerCase().includes('pokeball');
+
+        // Si ce n'est PAS une Pokeball, on ne fait rien
+        if (!isPokeball) {
+            console.log('[Default] Pas une Pokeball, skip');
+            return;
+        }
+
+        console.log('[Default] Pokeball détectée, application des réglages par défaut');
+
+        // 1. Force la sélection de "Normal (7cm)"
+        const $tailleSelect = $('select[name="attribute_pa_taille"]');
+        if ($tailleSelect.length) {
+            // Cherche l'option "Normal (7cm)"
+            const normalOption = $tailleSelect.find('option').filter(function() {
+                const val = $(this).val().toLowerCase();
+                return val.includes('normal') || val.includes('7cm');
+            }).first();
+
+            if (normalOption.length) {
+                $tailleSelect.val(normalOption.val()).trigger('change');
+                console.log('[Default] Taille forcée : ' + normalOption.val());
+            }
+        }
+
+        // 2. Active la PREMIÈRE miniature
+        setTimeout(function() {
+            const $thumbs = $('.flex-control-thumbs li img');
+
+            if ($thumbs.length > 0) {
+                // Retire toutes les classes active
+                $thumbs.removeClass('active flex-active');
+
+                // Active la PREMIÈRE
+                const $firstThumb = $thumbs.first();
+                $firstThumb.addClass('active flex-active');
+
+                // Met à jour l'image principale
+                const firstImageUrl = $firstThumb.attr('src');
+                if (firstImageUrl) {
+                    $('.woocommerce-product-gallery__image img, .wp-post-image').first()
+                        .attr('src', firstImageUrl)
+                        .removeAttr('srcset');
+                    $('.woocommerce-product-gallery__image a').first()
+                        .attr('href', firstImageUrl);
+
+                    // Met à jour l'index global
+                    window.galleryCurrentIndex = 0;
+                }
+
+                console.log('[Default] Première miniature activée (Pokeball)');
+            }
+        }, 300);
+
+    }, 1000);
+});
+
+    })(jQuery);
+    </script>
+    <?php
+}
