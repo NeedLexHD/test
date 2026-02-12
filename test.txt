@@ -681,22 +681,27 @@ if (type) {
             },
 
 
-            replaceImagesBySlug: function(slug, imageUrl) {
-                $('.wc-block-components-order-summary-item, .wc-block-cart-item, li, tr').each((i, item) => {
-                    const $item = $(item);
-                    const $link = $item.find('a[href*="/produit/"]').first();
-                    if ($link.length && $link.attr('href').includes(slug)) {
-                        $item.find('img').attr('src', imageUrl).removeAttr('srcset');
-                    }
-                });
-                $('li.wc-block-product, .related.products a, .upsells a, .cross-sells a').each((i, elem) => {
-                    const $elem = $(elem);
-                    const href = $elem.attr('href') || $elem.find('a').first().attr('href');
-                    if (href && href.includes(slug)) {
-                        $elem.find('img').attr('src', imageUrl).removeAttr('srcset');
-                    }
-                });
-            }
+replaceImagesBySlug: function(slug, imageUrl) {
+    $('.wc-block-components-order-summary-item, .wc-block-cart-item, li, tr').each((i, item) => {
+        const $item = $(item);
+        const $link = $item.find('a[href*="/produit/"]').first();
+        const itemSlug = this.extractSlugFromLink($link);
+        
+        if (itemSlug && itemSlug === slug) {
+            $item.find('img').attr('src', imageUrl).removeAttr('srcset');
+        }
+    });
+
+    $('li.wc-block-product, .related.products a, .upsells a, .cross-sells a').each((i, elem) => {
+        const $elem = $(elem);
+        const $link = $elem.is('a') ? $elem : $elem.find('a').first();
+        const itemSlug = this.extractSlugFromLink($link);
+        
+        if (itemSlug && itemSlug === slug) {
+            $elem.find('img').attr('src', imageUrl).removeAttr('srcset');
+        }
+    });
+}
         };
 
 
